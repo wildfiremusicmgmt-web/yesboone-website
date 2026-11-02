@@ -1,7 +1,10 @@
-# Yes Boone - keeps videos.json up to date with the newest YouTube uploads.
-# Long-form videos only (no Shorts). Runs every hour on GitHub (free). If YouTube can't be reached, nothing changes
-# and the site keeps showing the last good list.
-# EDIT ME: HIDE_IDS = video IDs to never show, e.g. ['abcdefghijk']; MAX_VIDEOS = how many cards.
+# Yes Boone - keeps videos.json up to date with the newest long-form YouTube videos (no Shorts).
+# Runs every hour on GitHub (free). If YouTube can't be read, nothing changes and the site
+# keeps showing the last good list.
+# EDIT ME (inside the script below):
+#   HIDE_IDS    = video IDs to never show, e.g. ['abcdefghijk']
+#   ALWAYS_SHOW = video IDs to always put first, e.g. a video posted on another channel
+#   MAX_VIDEOS  = how many video cards the site shows
 name: Update latest videos
 
 on:
@@ -22,53 +25,85 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Read the YouTube feed
+      - name: Read the YouTube videos
         run: |
           node --input-type=module <<'EOF'
           import fs from 'node:fs';
           const CHANNEL_ID = 'UCt0bc5uqdaC0bcihYZZbytw';   // youtube.com/@yesboone
           const MAX_VIDEOS = 5;
           const HIDE_IDS = [];
-          // Long-form videos only: YouTube's "videos" list for the channel (UULF...), which excludes Shorts.
-          // No all-uploads backup, so a Short can never slip in. If this list can't be read, nothing changes.
-          const FEEDS = [
-            'https://www.youtube.com/feeds/videos.xml?playlist_id=UULF' + CHANNEL_ID.slice(2),
-          ];
-          const pick = (t, re) => { const m = t.match(re); return m ? m[1].trim() : ''; };
+          const ALWAYS_SHOW = [];
+          const MANUAL = process.env.GITHUB_EVENT_NAME === 'workflow_dispatch';
+          const HEADERS = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+            'Accept-Language': 'en-AU,en;q=0.9',
+            'Cookie': 'SOCS=CAI; CONSENT=YES+1',
+          };
+          const ID = /^[\w-]{11}$/;
           const decode = (t) => t.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
             .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(+d)).replace(/&quot;/g, '"').replace(/&apos;/g, "'")
             .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
-          function parse(xml) {
-            return (xml.match(/<entry\b[^>]*>[\s\S]*?<\/entry>/g) || []).map((e) => ({
+          const pick = (t, re) => { const m = t.match(re); return m ? m[1].trim() : ''; };
+
+          // Source 1: YouTube's long-form feed (UULF = videos only, no Shorts).
+          async function fromFeed() {
+            const res = await fetch('https://www.youtube.com/feeds/videos.xml?playlist_id=UULF' + CHANNEL_ID.slice(2), { headers: HEADERS });
+            if (!res.ok) throw new Error('feed HTTP ' + res.status);
+            const list = (await res.text()).match(/<entry\b[^>]*>[\s\S]*?<\/entry>/g) || [];
+            return list.map((e) => ({
               id: pick(e, /<yt:videoId>([\w-]{11})<\/yt:videoId>/),
               title: decode(pick(e, /<title>([\s\S]*?)<\/title>/)),
               published: pick(e, /<published>([^<]+)<\/published>/),
               link: pick(e, /<link\b[^>]*\bhref="([^"]+)"/),
-            })).filter((v) => v.id && !v.link.includes('/shorts/') && !/#shorts?\b/i.test(v.title) && !HIDE_IDS.includes(v.id))
-              .sort((a, b) => Date.parse(b.published || 0) - Date.parse(a.published || 0))
-              .slice(0, MAX_VIDEOS).map(({ id, title, published }) => ({ id, title, published }));
+            })).filter((v) => !v.link.includes('/shorts/'))
+              .sort((a, b) => Date.parse(b.published || 0) - Date.parse(a.published || 0));
           }
+
+          // Source 2: the channel's "Videos" tab (long-form only - Shorts live on a separate tab), newest first.
+          async function fromVideosTab() {
+            const res = await fetch('https://www.youtube.com/channel/' + CHANNEL_ID + '/videos?hl=en&gl=AU', { headers: HEADERS });
+            if (!res.ok) throw new Error('videos tab HTTP ' + res.status);
+            const html = await res.text();
+            const out = [];
+            const seen = new Set();
+            const add = (id, title) => { if (ID.test(id) && !seen.has(id)) { seen.add(id); out.push({ id, title: title || '' }); } };
+            // Classic layout: "videoRenderer":{"videoId":"...", ... "title":{"runs":[{"text":"..."}]
+            for (const m of html.matchAll(/"videoRenderer":\{"videoId":"([\w-]{11})"[\s\S]{0,4000}?"title":\{"runs":\[\{"text":"((?:[^"\\]|\\.)*)"/g)) add(m[1], JSON.parse('"' + m[2] + '"'));
+            // Newer layout: "lockupViewModel" with "contentId" (skip Shorts layouts)
+            if (!out.length) for (const m of html.matchAll(/"lockupViewModel":\{[\s\S]{0,3000}?"contentId":"([\w-]{11})"[\s\S]{0,3000}?"title":\{"content":"((?:[^"\\]|\\.)*)"/g)) add(m[1], JSON.parse('"' + m[2] + '"'));
+            if (!out.length && /consent\.youtube\.com|before you continue/i.test(html)) throw new Error('videos tab showed a consent page');
+            return out;
+          }
+
           let videos = [];
-          for (const url of FEEDS) {
-            for (let attempt = 1; attempt <= 3 && !videos.length; attempt++) {
+          const problems = [];
+          for (const [name, source] of [['long-form feed', fromFeed], ['Videos tab', fromVideosTab]]) {
+            for (let attempt = 1; attempt <= 2 && !videos.length; attempt++) {
               try {
-                const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; yesboone.com video list)' } });
-                if (!res.ok) throw new Error('HTTP ' + res.status);
-                videos = parse(await res.text());
-                if (!videos.length) throw new Error('no videos in feed');
+                videos = (await source()).filter((v) => v.id && !HIDE_IDS.includes(v.id));
+                if (!videos.length) throw new Error('no videos found');
+                console.log(`Read ${videos.length} videos from the ${name}`);
               } catch (err) {
-                console.log(`Feed ${url} attempt ${attempt} failed: ${err.message}`);
-                await new Promise((r) => setTimeout(r, 5000 * attempt));
+                problems.push(`${name} (try ${attempt}): ${err.message}`);
+                console.log(`Could not read the ${name} (try ${attempt}): ${err.message}`);
+                await new Promise((r) => setTimeout(r, 4000));
               }
             }
             if (videos.length) break;
           }
-          if (!videos.length) { console.log('YouTube not reachable - keeping the current videos.json'); process.exit(0); }
+          if (!videos.length) {
+            const msg = "Couldn't read YouTube - the site keeps its current videos. " + problems.join(' | ');
+            console.log(`::${MANUAL ? 'error' : 'warning'}::${msg}`);
+            process.exit(MANUAL ? 1 : 0);   // red cross only when you press Run workflow; hourly runs stay quiet
+          }
+          const pinned = ALWAYS_SHOW.filter((id) => ID.test(id)).map((id) => videos.find((v) => v.id === id) || { id, title: '' });
+          const list = [...pinned, ...videos.filter((v) => !ALWAYS_SHOW.includes(v.id))]
+            .slice(0, MAX_VIDEOS).map(({ id, title, published }) => ({ id, title, ...(published ? { published } : {}) }));
           let old = null;
           try { old = JSON.parse(fs.readFileSync('videos.json', 'utf8')); } catch {}
-          if (old && JSON.stringify(old.videos) === JSON.stringify(videos)) { console.log('No new videos'); process.exit(0); }
-          fs.writeFileSync('videos.json', JSON.stringify({ videos, updated: new Date().toISOString() }, null, 1) + '\n');
-          console.log('Saved:', videos.map((v) => v.title).join(' | '));
+          if (old && JSON.stringify(old.videos) === JSON.stringify(list)) { console.log('No new videos'); process.exit(0); }
+          fs.writeFileSync('videos.json', JSON.stringify({ videos: list, updated: new Date().toISOString() }, null, 1) + '\n');
+          console.log('Saved: ' + list.map((v) => v.title || v.id).join(' | '));
           EOF
 
       - name: Save to the repo (only if the list changed)
