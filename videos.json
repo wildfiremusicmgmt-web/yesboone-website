@@ -1,6 +1,11 @@
 {
  "videos": [
   {
+   "id": "IoPjOxhOxjk",
+   "title": "Yes Boone - Supernova (Official Music Video)",
+   "published": "2026-11-04T04:50:37Z"
+  },
+  {
    "id": "7_cCmJFAvlw",
    "title": "Yes Boone - Nosebleeds (Official Lyric Video)",
    "published": "2026-09-09T22:00:19Z"
@@ -19,12 +24,7 @@
    "id": "jS_AmTR3VbQ",
    "title": "Yes Boone - Window 2 (Official Visualiser)",
    "published": "2025-07-31T14:01:14Z"
-  },
-  {
-   "id": "Svy2bWYVJIw",
-   "title": "Yes Boone - Modern Life (Official Visualiser)",
-   "published": "2025-04-10T14:00:39Z"
   }
  ],
- "updated": "2026-11-02T05:28:27.037Z"
+ "updated": "2026-11-10T09:56:29.160Z"
 }
