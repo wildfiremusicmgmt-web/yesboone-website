@@ -1,11 +1,6 @@
 {
  "videos": [
   {
-   "id": "zsRqRK37RvU",
-   "title": "Editing a Video Scissors Instead of a PC",
-   "published": "2026-11-12T08:24:02Z"
-  },
-  {
    "id": "IoPjOxhOxjk",
    "title": "Yes Boone - Supernova (Official Music Video)",
    "published": "2026-11-12T04:30:10Z"
@@ -24,7 +19,12 @@
    "id": "b14kdOtAcYE",
    "title": "Yes Boone - All I Really Want (Official Video)",
    "published": "2025-09-11T14:01:05Z"
+  },
+  {
+   "id": "jS_AmTR3VbQ",
+   "title": "Yes Boone - Window 2 (Official Visualiser)",
+   "published": "2025-07-31T14:01:14Z"
   }
  ],
- "updated": "2026-11-13T09:37:27.289Z"
+ "updated": "2026-11-14T06:32:13.841Z"
 }
